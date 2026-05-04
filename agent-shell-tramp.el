@@ -63,6 +63,12 @@
 
 (defvar agent-shell-path-resolver-function)
 
+(defcustom agent-shell-tramp-remote-shell "bash"
+  "Shell to use for running commands on the remote host.
+Must support the -l (login) and -c (command) flags."
+  :type '(choice (const "bash") (const "zsh") (const "sh") (string :tag "Custom shell"))
+  :group 'agent-shell-tramp)
+
 ;; handling environment variables
 (defun agent-shell-tramp--prepare-env-var (var)
   "Format environment variables VAR for shell export.
@@ -107,8 +113,8 @@ Returns a list of \"export KEY='VALUE'\" strings with properly quoted values."
                    `("ssh" ,(when port
                         (list "-p" port))
                      ,ssh-dest
-                     ,(format "bash -lc \"%s; %s\""
-                              (string-join env-vars " ")
+                     ,(format "%s -lc \"%s; %s\""
+                              agent-shell-tramp-remote-shell (string-join env-vars " ")
                               (string-join (append (list command) command-params)
                                            " ")))))
                  (args (plist-put args :command (car command-list)))
