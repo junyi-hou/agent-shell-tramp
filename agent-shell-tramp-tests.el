@@ -5,11 +5,17 @@
 
 (ert-deftest agent-shell-tramp--prepare-env-var-test ()
   "Test environment variable formatting."
-  (let ((input '("KEY1=VALUE1" "KEY2=VALUE WITH SPACES")))
+  (let ((input '("KEY1=VALUE1" "KEY2=VALUE WITH SPACES" "KEY3=foo=bar"
+                 "KEY4=it's quoted" "KEY5=$NOT_EXPANDED" "KEY6=")))
     (should
      (equal
       (agent-shell-tramp--prepare-env-var input)
-      '("export KEY1=VALUE1" "export KEY2='VALUE WITH SPACES'")))))
+      (list (format "export KEY1=%s" (shell-quote-argument "VALUE1"))
+            (format "export KEY2=%s" (shell-quote-argument "VALUE WITH SPACES"))
+            (format "export KEY3=%s" (shell-quote-argument "foo=bar"))
+            (format "export KEY4=%s" (shell-quote-argument "it's quoted"))
+            (format "export KEY5=%s" (shell-quote-argument "$NOT_EXPANDED"))
+            (format "export KEY6=%s" (shell-quote-argument "")))))))
 
 (ert-deftest agent-shell-tramp-resolve-path-test ()
   "Test path resolution logic."

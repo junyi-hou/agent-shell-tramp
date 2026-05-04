@@ -67,15 +67,13 @@
 (defun agent-shell-tramp--prepare-env-var (var)
   "Format environment variables VAR for shell export.
 VAR should be a list of \"KEY=VALUE\" strings.
-Returns a list of \"export KEY=VALUE\" strings, with values quoted if they
-contain spaces."
+Returns a list of \"export KEY='VALUE'\" strings with properly quoted values."
   (mapcar
    (lambda (env)
-     (if-let* ((env-list (string-split env "="))
-               (value (cadr env-list))
-               (_ (string-match-p " " value)))
-       (format "export %s" (string-join `(,(car env-list) ,(format "'%s'" value)) "="))
-       (format "export %s" env)))
+     (let* ((idx (string-search "=" env))
+            (key (substring env 0 idx))
+            (value (substring env (1+ idx))))
+       (format "export %s=%s" key (shell-quote-argument value))))
    var))
 
 (defun agent-shell-tramp--make-acp-client (orig-fn &rest args)
