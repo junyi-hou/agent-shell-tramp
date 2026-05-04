@@ -10,12 +10,12 @@
     (should
      (equal
       (agent-shell-tramp--prepare-env-var input)
-      (list (format "export KEY1=%s" (shell-quote-argument "VALUE1"))
-            (format "export KEY2=%s" (shell-quote-argument "VALUE WITH SPACES"))
-            (format "export KEY3=%s" (shell-quote-argument "foo=bar"))
-            (format "export KEY4=%s" (shell-quote-argument "it's quoted"))
-            (format "export KEY5=%s" (shell-quote-argument "$NOT_EXPANDED"))
-            (format "export KEY6=%s" (shell-quote-argument "")))))))
+      '("export KEY1=VALUE1"
+        "export KEY2=VALUE\\ WITH\\ SPACES"
+        "export KEY3=foo\\=bar"
+        "export KEY4=it\\'s\\ quoted"
+        "export KEY5=\\$NOT_EXPANDED"
+        "export KEY6=''")))))
 
 (ert-deftest agent-shell-tramp-resolve-path-test ()
   "Test path resolution logic."
@@ -72,7 +72,7 @@
           (should (member "user@host" params))
           (should
            (string-match-p
-            "bash -lc \"export FOO=BAR export BAZ='QUX WITH SPACES'; ls -la\""
+            "bash -lc \"export FOO=BAR export BAZ=QUX\\\\ WITH\\\\ SPACES; ls -la\""
             (car (last params)))))))))
 
 (provide 'agent-shell-tramp-tests)
