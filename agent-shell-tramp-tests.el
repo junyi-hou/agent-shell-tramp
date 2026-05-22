@@ -1,79 +1,123 @@
-;;; agent-shell-tramp-tests.el --- Tests for agent-shell-tramp -*- lexical-binding: t -*-
+;;; agent-shell-tramp-tests.el --- Tests for agent-shell-tramp -*- lexical-binding: t; -*-
 
 (require 'ert)
+(require 'cl-lib)
 (require 'agent-shell-tramp)
 
-(ert-deftest agent-shell-tramp--prepare-env-var-test ()
-  "Test environment variable formatting."
-  (let ((input '("KEY1=VALUE1" "KEY2=VALUE WITH SPACES" "KEY3=foo=bar"
-                 "KEY4=it's quoted" "KEY5=$NOT_EXPANDED" "KEY6=")))
-    (should
-     (equal
-      (agent-shell-tramp--prepare-env-var input)
-      '("export KEY1=VALUE1"
-        "export KEY2=VALUE\\ WITH\\ SPACES"
-        "export KEY3=foo\\=bar"
-        "export KEY4=it\\'s\\ quoted"
-        "export KEY5=\\$NOT_EXPANDED"
-        "export KEY6=''")))))
+(defmacro agent-shell-tramp-tests--with-cwd (cwd &rest body)
+  "Run BODY with `agent-shell-cwd' returning CWD."
+  (declare (indent 1))
+  `(cl-letf (((symbol-function 'agent-shell-cwd)
+              (lambda () ,cwd)))
+     ,@body))
 
-(ert-deftest agent-shell-tramp-resolve-path-test ()
-  "Test path resolution logic."
-  (let ((agent-shell-cwd-mock "/ssh:user@host:/remote/path"))
-    (cl-letf (((symbol-function 'agent-shell-cwd) (lambda () agent-shell-cwd-mock)))
-      ;; Test remote TRAMP path input
-      (should
-       (equal
-        (agent-shell-tramp-resolve-path "/ssh:user@host:/remote/file") "/remote/file"))
-      ;; Test local path on remote input
-      (should
-       (equal
-        (agent-shell-tramp-resolve-path "/remote/path/subdir/file")
-        "/ssh:user@host:/remote/path/subdir/file"))))
+(ert-deftest agent-shell-tramp-resolve-tramp-to-remote-local ()
+  "TRAMP paths are stripped before being sent to the remote agent."
+  (agent-shell-tramp-tests--with-cwd "/ssh:user@host:/home/user/project/"
+    (should (equal (agent-shell-tramp-resolve-path
+                    "/ssh:user@host:/home/user/project/file.el")
+                   "/home/user/project/file.el"))))
 
-  (let ((agent-shell-cwd-mock "/local/path"))
-    (cl-letf (((symbol-function 'agent-shell-cwd) (lambda () agent-shell-cwd-mock)))
-      ;; Test local path when NOT in TRAMP context
-      (should (equal (agent-shell-tramp-resolve-path "/local/file") "/local/file")))))
+(ert-deftest agent-shell-tramp-resolve-remote-local-to-tramp ()
+  "Remote-local absolute paths are wrapped for Emacs file handlers."
+  (agent-shell-tramp-tests--with-cwd "/ssh:user@host:/home/user/project/"
+    (let ((resolved (agent-shell-tramp-resolve-path
+                     "/home/user/project/file.el")))
+      (should (equal (file-remote-p resolved) "/ssh:user@host:"))
+      (should (equal (tramp-file-name-localname
+                      (tramp-dissect-file-name resolved))
+                     "/home/user/project/file.el")))))
 
-(ert-deftest agent-shell-tramp-transcript-dir-test ()
-  "Test transcript directory generation for TRAMP."
-  (let ((agent-shell-cwd-mock "/ssh:user@host:/remote/path"))
-    (cl-letf (((symbol-function 'agent-shell-cwd) (lambda () agent-shell-cwd-mock))
-              ((symbol-function 'make-directory)
-               (lambda (_dir &optional _parents) nil)))
-      (let ((result (agent-shell-tramp-transcript-dir)))
-        (should (string-match-p "/.agent-shell/transcripts/host/remote_path/" result))
-        (should (string-match-p "\\.md$" result)))))
+(ert-deftest agent-shell-tramp-resolve-relative-path-is-unchanged ()
+  "Relative paths are left untouched in remote sessions."
+  (agent-shell-tramp-tests--with-cwd "/ssh:user@host:/home/user/project/"
+    (should (equal (agent-shell-tramp-resolve-path "src/file.el")
+                   "src/file.el"))))
 
-  (let ((agent-shell-cwd-mock "/local/path"))
-    (cl-letf (((symbol-function 'agent-shell-cwd) (lambda () agent-shell-cwd-mock))
-              ((symbol-function 'make-directory)
-               (lambda (_dir &optional _parents) nil)))
-      (let ((result (agent-shell-tramp-transcript-dir)))
-        (should (string-match-p "/local/path/.agent-shell/transcripts/" result))
-        (should (string-match-p "\\.md$" result))))))
+(ert-deftest agent-shell-tramp-resolve-local-context-is-identity ()
+  "Local sessions do not resolve paths."
+  (agent-shell-tramp-tests--with-cwd "/tmp/project/"
+    (should (equal (agent-shell-tramp-resolve-path "/tmp/project/file.el")
+                   "/tmp/project/file.el"))))
 
-(ert-deftest agent-shell-tramp--make-acp-client-test ()
-  "Test `agent-shell--make-acp-client' advice for TRAMP."
-  (let ((agent-shell-cwd-mock "/ssh:user@host:/remote/path")
-        (captured-args nil))
-    (cl-letf (((symbol-function 'agent-shell-cwd) (lambda () agent-shell-cwd-mock)))
-      (let ((mock-fn (lambda (&rest args) (setq captured-args args))))
-        (apply #'agent-shell-tramp--make-acp-client
-               mock-fn
-               '(:command
-                 "ls"
-                 :command-params ("-la")
-                 :environment-variables ("FOO=BAR" "BAZ=QUX WITH SPACES")
-                 :context-buffer nil))
-        (should (equal (plist-get captured-args :command) "ssh"))
-        (let ((params (plist-get captured-args :command-params)))
-          (should (member "user@host" params))
-          (should
-           (string-match-p
-            "bash -lc \"export FOO=BAR export BAZ=QUX\\\\ WITH\\\\ SPACES; ls -la\""
-            (car (last params)))))))))
+(ert-deftest agent-shell-tramp-resolver-around-composes ()
+  "Around resolver calls the previous resolver for paths it does not handle."
+  (agent-shell-tramp-tests--with-cwd "/tmp/project/"
+    (should (equal (agent-shell-tramp--resolve-path-around
+                    (lambda (path) (concat "orig:" path))
+                    "file.el")
+                   "orig:file.el"))))
+
+(ert-deftest agent-shell-tramp-acp-support-detects-upstream-file-handler ()
+  "ACP support detection accepts upstream `:file-handler' implementation."
+  (let ((acp-file-handler-process-support nil))
+    (cl-letf (((symbol-function 'acp--start-client)
+               (lambda ()
+                 (make-process :name "test"
+                               :command '("true")
+                               :file-handler t))))
+      (should (agent-shell-tramp-acp-file-handler-support-p)))))
+
+(ert-deftest agent-shell-tramp-transcript-path-is-local ()
+  "Remote transcripts are stored in a local directory."
+  (let ((agent-shell-tramp-transcript-directory
+         (expand-file-name "agent-shell-tramp-test/" temporary-file-directory)))
+    (agent-shell-tramp-tests--with-cwd "/ssh:user@host:/home/user/project/"
+      (let ((path (agent-shell-tramp-transcript-file-path)))
+        (should path)
+        (should-not (file-remote-p path))
+        (should (file-directory-p (file-name-directory path)))
+        (should (string-match-p "/ssh/user@host/" path))))))
+
+(ert-deftest agent-shell-tramp-mode-installs-and-removes-wrappers ()
+  "Global mode composes with existing resolver and transcript functions."
+  (let ((agent-shell-path-resolver-function
+         (default-value 'agent-shell-path-resolver-function))
+        (agent-shell-transcript-file-path-function
+         (default-value 'agent-shell-transcript-file-path-function))
+        (agent-shell-tramp-require-acp-file-handler-support nil))
+    (unwind-protect
+        (progn
+          (setq-default agent-shell-path-resolver-function #'identity)
+          (setq-default agent-shell-transcript-file-path-function
+                        (lambda () "/tmp/local.md"))
+          (agent-shell-tramp-mode 1)
+          (should agent-shell-tramp--enabled)
+          (agent-shell-tramp-mode -1)
+          (should-not agent-shell-tramp--enabled)
+          (should (eq (default-value 'agent-shell-path-resolver-function)
+                      #'identity)))
+      (setq-default agent-shell-path-resolver-function
+                    agent-shell-path-resolver-function)
+      (setq-default agent-shell-transcript-file-path-function
+                    agent-shell-transcript-file-path-function)
+      (setq agent-shell-tramp--enabled nil))))
+
+(ert-deftest agent-shell-tramp-mode-enable-is-idempotent ()
+  "Enabling the mode repeatedly does not stack duplicate wrappers."
+  (let ((agent-shell-path-resolver-function
+         (default-value 'agent-shell-path-resolver-function))
+        (agent-shell-transcript-file-path-function
+         (default-value 'agent-shell-transcript-file-path-function))
+        (agent-shell-tramp-require-acp-file-handler-support nil))
+    (unwind-protect
+        (agent-shell-tramp-tests--with-cwd "/tmp/project/"
+          (setq-default agent-shell-path-resolver-function
+                        (lambda (path) (concat "orig:" path)))
+          (setq-default agent-shell-transcript-file-path-function
+                        (lambda () "/tmp/local.md"))
+          (agent-shell-tramp-mode 1)
+          (agent-shell-tramp-mode 1)
+          (should (equal (funcall (default-value
+                                   'agent-shell-path-resolver-function)
+                                  "file.el")
+                         "orig:file.el")))
+      (agent-shell-tramp-mode -1)
+      (setq-default agent-shell-path-resolver-function
+                    agent-shell-path-resolver-function)
+      (setq-default agent-shell-transcript-file-path-function
+                    agent-shell-transcript-file-path-function)
+      (setq agent-shell-tramp--enabled nil))))
 
 (provide 'agent-shell-tramp-tests)
 ;;; agent-shell-tramp-tests.el ends here
