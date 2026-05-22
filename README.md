@@ -8,7 +8,7 @@ Generic TRAMP support for [`agent-shell`](https://github.com/xenodium/agent-shel
 
 - Emacs 29.1+
 - `agent-shell`
-- A recent `acp.el` with TRAMP/file-handler process support. This landed upstream in [xenodium/acp.el#20](https://github.com/xenodium/acp.el/pull/20).
+- `acp.el` 0.12.1 or newer, which includes TRAMP/file-handler process support from [xenodium/acp.el#20](https://github.com/xenodium/acp.el/pull/20).
 - A working TRAMP backend. The file-handler approach is generic TRAMP, but each backend must support long-lived remote processes.
 
 ## Installation
@@ -44,10 +44,8 @@ When `agent-shell` is started from a remote TRAMP buffer, upstream `acp.el` star
 When `agent-shell-cwd` is remote:
 
 - TRAMP paths such as `/ssh:host:/project/file.el` are sent to the agent as remote-local paths like `/project/file.el`.
-- Remote-local absolute paths from the agent are resolved back into TRAMP paths for Emacs file handlers.
+- Remote-local paths from the agent are resolved back into TRAMP paths for Emacs file handlers.
 - Remote transcripts are stored locally under `agent-shell-tramp-transcript-directory`.
-
-Relative paths are left unchanged.
 
 ## Notes
 

@@ -28,11 +28,14 @@
                       (tramp-dissect-file-name resolved))
                      "/home/user/project/file.el")))))
 
-(ert-deftest agent-shell-tramp-resolve-relative-path-is-unchanged ()
-  "Relative paths are left untouched in remote sessions."
+(ert-deftest agent-shell-tramp-resolve-relative-path-to-tramp ()
+  "Relative paths are wrapped for Emacs file handlers in remote sessions."
   (agent-shell-tramp-tests--with-cwd "/ssh:user@host:/home/user/project/"
-    (should (equal (agent-shell-tramp-resolve-path "src/file.el")
-                   "src/file.el"))))
+    (let ((resolved (agent-shell-tramp-resolve-path "src/file.el")))
+      (should (equal (file-remote-p resolved) "/ssh:user@host:"))
+      (should (equal (tramp-file-name-localname
+                      (tramp-dissect-file-name resolved))
+                     "src/file.el")))))
 
 (ert-deftest agent-shell-tramp-resolve-local-context-is-identity ()
   "Local sessions do not resolve paths."
@@ -40,23 +43,11 @@
     (should (equal (agent-shell-tramp-resolve-path "/tmp/project/file.el")
                    "/tmp/project/file.el"))))
 
-(ert-deftest agent-shell-tramp-resolver-around-composes ()
-  "Around resolver calls the previous resolver for paths it does not handle."
-  (agent-shell-tramp-tests--with-cwd "/tmp/project/"
-    (should (equal (agent-shell-tramp--resolve-path-around
-                    (lambda (path) (concat "orig:" path))
-                    "file.el")
-                   "orig:file.el"))))
-
-(ert-deftest agent-shell-tramp-acp-support-detects-upstream-file-handler ()
-  "ACP support detection accepts upstream `:file-handler' implementation."
-  (let ((acp-file-handler-process-support nil))
-    (cl-letf (((symbol-function 'acp--start-client)
-               (lambda ()
-                 (make-process :name "test"
-                               :command '("true")
-                               :file-handler t))))
-      (should (agent-shell-tramp-acp-file-handler-support-p)))))
+(ert-deftest agent-shell-tramp-check-acp-support-rejects-old-version ()
+  "ACP support check rejects versions before file-handler support."
+  (let ((acp-package-version "0.11.3"))
+    (should-error (agent-shell-tramp--check-acp-support)
+                  :type 'user-error)))
 
 (ert-deftest agent-shell-tramp-transcript-path-is-local ()
   "Remote transcripts are stored in a local directory."
@@ -70,53 +61,53 @@
         (should (string-match-p "/ssh/user@host/" path))))))
 
 (ert-deftest agent-shell-tramp-mode-installs-and-removes-wrappers ()
-  "Global mode composes with existing resolver and transcript functions."
-  (let ((agent-shell-path-resolver-function
-         (default-value 'agent-shell-path-resolver-function))
+  "Global mode installs and removes path and transcript functions."
+  (let ((agent-shell-path-resolver-function agent-shell-path-resolver-function)
         (agent-shell-transcript-file-path-function
-         (default-value 'agent-shell-transcript-file-path-function))
-        (agent-shell-tramp-require-acp-file-handler-support nil))
+         agent-shell-transcript-file-path-function))
     (unwind-protect
         (progn
-          (setq-default agent-shell-path-resolver-function #'identity)
-          (setq-default agent-shell-transcript-file-path-function
-                        (lambda () "/tmp/local.md"))
+          (setq agent-shell-path-resolver-function #'identity)
+          (setq agent-shell-transcript-file-path-function
+                (lambda () "/tmp/local.md"))
           (agent-shell-tramp-mode 1)
           (should agent-shell-tramp--enabled)
+          (should (eq agent-shell-path-resolver-function
+                      #'agent-shell-tramp-resolve-path))
+          (should (eq agent-shell-transcript-file-path-function
+                      #'agent-shell-tramp-transcript-file-path))
           (agent-shell-tramp-mode -1)
           (should-not agent-shell-tramp--enabled)
-          (should (eq (default-value 'agent-shell-path-resolver-function)
-                      #'identity)))
-      (setq-default agent-shell-path-resolver-function
-                    agent-shell-path-resolver-function)
-      (setq-default agent-shell-transcript-file-path-function
-                    agent-shell-transcript-file-path-function)
+          (should (eq agent-shell-path-resolver-function #'identity)))
+      (setq agent-shell-path-resolver-function
+            agent-shell-path-resolver-function)
+      (setq agent-shell-transcript-file-path-function
+            agent-shell-transcript-file-path-function)
       (setq agent-shell-tramp--enabled nil))))
 
 (ert-deftest agent-shell-tramp-mode-enable-is-idempotent ()
-  "Enabling the mode repeatedly does not stack duplicate wrappers."
-  (let ((agent-shell-path-resolver-function
-         (default-value 'agent-shell-path-resolver-function))
+  "Enabling the mode repeatedly keeps original functions restorable."
+  (let ((agent-shell-path-resolver-function agent-shell-path-resolver-function)
         (agent-shell-transcript-file-path-function
-         (default-value 'agent-shell-transcript-file-path-function))
-        (agent-shell-tramp-require-acp-file-handler-support nil))
+         agent-shell-transcript-file-path-function))
     (unwind-protect
-        (agent-shell-tramp-tests--with-cwd "/tmp/project/"
-          (setq-default agent-shell-path-resolver-function
-                        (lambda (path) (concat "orig:" path)))
-          (setq-default agent-shell-transcript-file-path-function
-                        (lambda () "/tmp/local.md"))
+        (let ((original-resolver (lambda (path) (concat "orig:" path)))
+              (original-transcript (lambda () "/tmp/local.md")))
+          (setq agent-shell-path-resolver-function original-resolver)
+          (setq agent-shell-transcript-file-path-function original-transcript)
           (agent-shell-tramp-mode 1)
           (agent-shell-tramp-mode 1)
-          (should (equal (funcall (default-value
-                                   'agent-shell-path-resolver-function)
-                                  "file.el")
-                         "orig:file.el")))
+          (should (eq agent-shell-tramp--orig-path-resolver-function
+                      original-resolver))
+          (agent-shell-tramp-mode -1)
+          (should (eq agent-shell-path-resolver-function original-resolver))
+          (should (eq agent-shell-transcript-file-path-function
+                      original-transcript)))
       (agent-shell-tramp-mode -1)
-      (setq-default agent-shell-path-resolver-function
-                    agent-shell-path-resolver-function)
-      (setq-default agent-shell-transcript-file-path-function
-                    agent-shell-transcript-file-path-function)
+      (setq agent-shell-path-resolver-function
+            agent-shell-path-resolver-function)
+      (setq agent-shell-transcript-file-path-function
+            agent-shell-transcript-file-path-function)
       (setq agent-shell-tramp--enabled nil))))
 
 (provide 'agent-shell-tramp-tests)
