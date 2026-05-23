@@ -1,53 +1,57 @@
 # agent-shell-tramp
 
-Running `agent-shell` on remote machines using Emacs TRAMP.
+Generic TRAMP support for [`agent-shell`](https://github.com/xenodium/agent-shell).
 
-## Description
+`agent-shell-tramp` keeps TRAMP-specific behavior outside `agent-shell` core. It lets ACP agents run from remote TRAMP buffers by relying on Emacs file handlers for process startup, translating paths between TRAMP and remote-local forms, and storing remote session transcripts locally.
 
-`agent-shell-tramp` is an Emacs package that extends `agent-shell` with TRAMP support. It allows you to run shell processes and manage files on remote hosts via TRAMP seamlessly, just as you would locally.
+## Requirements
+
+- Emacs 29.1+
+- `agent-shell`
+- `acp.el` 0.12.1 or newer, which includes TRAMP/file-handler process support from [xenodium/acp.el#20](https://github.com/xenodium/acp.el/pull/20).
+- A working TRAMP backend. The file-handler approach is generic TRAMP, but each backend must support long-lived remote processes.
 
 ## Installation
 
-### Manual
-
-Clone this repository and add the path to your Emacs `load-path`:
+Clone this repository and add it to your `load-path`:
 
 ```elisp
 (add-to-list 'load-path "/path/to/agent-shell-tramp")
 (require 'agent-shell-tramp)
+(agent-shell-tramp-mode 1)
 ```
 
-### With `use-package`
+With `use-package` and straight.el:
 
 ```elisp
 (use-package agent-shell-tramp
-  ;; or :ensure if using elpaca with use-package integration
-  :straight (:host github :repo "junyi-hou/agent-shell-remote")
+  :straight (:host github :repo "junyi-hou/agent-shell-tramp")
+  :after agent-shell
   :config
   (agent-shell-tramp-mode 1))
 ```
 
 ## Usage
 
-Enable the minor mode globally:
+Enable the global minor mode:
 
 ```elisp
 (agent-shell-tramp-mode 1)
 ```
 
-Once enabled, `agent-shell` will automatically detect when you are in a remote directory (via TRAMP) and:
+When `agent-shell` is started from a remote TRAMP buffer, upstream `acp.el` starts the ACP client through Emacs file handlers. That lets TRAMP own the transport instead of this package constructing an explicit `ssh ... shell -lc ...` wrapper.
 
-1.  Start the necessary client processes on the remote machine.
-2.  Resolve and handle file paths between local Emacs and the remote environment.
+When `agent-shell-cwd` is remote:
 
-## Approaches
+- TRAMP paths such as `/ssh:host:/project/file.el` are sent to the agent as remote-local paths like `/project/file.el`.
+- Remote-local paths from the agent are resolved back into TRAMP paths for Emacs file handlers.
+- Remote transcripts are stored locally under `agent-shell-tramp-transcript-directory`.
 
-The bulk of this work is based on an idea by [csheaff](https://github.com/csheaff) from this [PR](https://github.com/xenodium/agent-shell/pull/205). There are two ways to start the agent (with the configured environment variables) on a remote host:
-1. By using `:file-handler t` in `make-process` and replacing `(executable-find COMMAND)` with `(executable-find COMMAND t)`. This approach finds the agent executable and applies environment variables in a TRAMP-native way (i.e., using `tramp-remote-path` and `tramp-remote-process-environment`).
-2. By (ab)using the `agent-shell-container-command-runner` to prepend `ssh user@remote -- bash -lc` to the agent shell commands to launch the agent directly via an SSH command. Applying environment variables is trickier in this setting, as one must either pass them to the remote host via the `SendEnv` option (which requires modifying the `sshd` config on the remote machine) or include them in the `bash -lc` command.
+## Notes
 
-As discussed in the PR, option 1 is better than option 2. Despite this, the current implementation follows option 2 because it is less invasive—it does not require [modifying acp.el](https://github.com/xenodium/acp.el/pull/9), which I attempted but failed (see the `use-cl-flet` branch of this repo). For some reason, adding arguments to `make-process` and `executable-find` in `acp.el` and `agent-shell` with `cl-flet` or `cl-letf` does not work. That said, option 1 is still a more stable implementation, and I intend to revisit it in the future. PRs and comments are more than welcome if you know how to make it work.
+This package no longer wraps process startup in SSH directly. Older versions used `agent-shell-tramp-remote-shell` to build an `ssh ... shell -lc ...` command; that variable is obsolete because process startup is now delegated to `acp.el` and TRAMP file handlers.
 
+This package is based on earlier work in [csheaff/agent-shell-tramp-rpc](https://github.com/csheaff/agent-shell-tramp-rpc) and the original discussion in [xenodium/agent-shell#205](https://github.com/xenodium/agent-shell/pull/205).
 
 ## License
 
