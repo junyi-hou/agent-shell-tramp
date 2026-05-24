@@ -66,12 +66,15 @@
 (defun agent-shell-tramp--dissect (filename)
   "Return TRAMP vector for FILENAME, or nil when FILENAME is not remote."
   (when (and (stringp filename)
-             (ignore-errors (file-remote-p filename)))
+             (ignore-errors
+               (file-remote-p filename)))
     (tramp-dissect-file-name filename)))
 
 (defun agent-shell-tramp--current-vec ()
   "Return TRAMP vector for the current `agent-shell' working directory."
-  (when-let ((cwd (ignore-errors (agent-shell-cwd))))
+  (when-let ((cwd
+              (ignore-errors
+                (agent-shell-cwd))))
     (agent-shell-tramp--dissect cwd)))
 
 (defun agent-shell-tramp-resolve-path (path)
@@ -83,20 +86,22 @@ When `agent-shell-cwd' is remote:
 
 When `agent-shell-cwd' is local, return PATH unchanged."
   (if-let ((vec (agent-shell-tramp--current-vec)))
-      (cond
-       ((agent-shell-tramp--dissect path)
-        (tramp-file-name-localname (tramp-dissect-file-name path)))
-       ((stringp path)
-        (tramp-make-tramp-file-name vec path))
-       (t path))
+    (cond
+     ((agent-shell-tramp--dissect path)
+      (tramp-file-name-localname (tramp-dissect-file-name path)))
+     ((stringp path)
+      (tramp-make-tramp-file-name vec path))
+     (t
+      path))
     path))
 
 (defun agent-shell-tramp--safe-component (string &optional fallback)
   "Return STRING sanitized for use as a single path component.
 Use FALLBACK when STRING is nil or empty."
-  (let ((value (if (and string (not (string-empty-p string)))
-                   string
-                 (or fallback "unknown"))))
+  (let ((value
+         (if (and string (not (string-empty-p string)))
+             string
+           (or fallback "unknown"))))
     (replace-regexp-in-string "[^[:alnum:].@_-]" "_" value)))
 
 (defun agent-shell-tramp--shorten (string max-length)
@@ -107,19 +112,22 @@ Use FALLBACK when STRING is nil or empty."
 
 (defun agent-shell-tramp--transcript-dir ()
   "Return local transcript directory for the current remote session."
-  (when-let* ((cwd (ignore-errors (agent-shell-cwd)))
+  (when-let* ((cwd
+               (ignore-errors
+                 (agent-shell-cwd)))
               (vec (agent-shell-tramp--dissect cwd)))
-    (let* ((method (agent-shell-tramp--safe-component
-                    (tramp-file-name-method vec) "tramp"))
-           (user-host (agent-shell-tramp--safe-component
-                       (format "%s@%s"
-                               (or (tramp-file-name-user vec) "default")
-                               (or (tramp-file-name-host vec) "unknown"))))
+    (let* ((method
+            (agent-shell-tramp--safe-component (tramp-file-name-method vec) "tramp"))
+           (user-host
+            (agent-shell-tramp--safe-component
+             (format "%s@%s"
+                     (or (tramp-file-name-user vec) "default")
+                     (or (tramp-file-name-host vec) "unknown"))))
            (localname (or (tramp-file-name-localname vec) "/"))
            (raw-slug (string-trim localname "/" "/"))
-           (slug (agent-shell-tramp--shorten
-                  (agent-shell-tramp--safe-component raw-slug "root")
-                  80))
+           (slug
+            (agent-shell-tramp--shorten
+             (agent-shell-tramp--safe-component raw-slug "root") 80))
            (hash (substring (secure-hash 'sha1 cwd) 0 12)))
       (file-name-concat agent-shell-tramp-transcript-directory
                         method
@@ -128,35 +136,31 @@ Use FALLBACK when STRING is nil or empty."
 
 (defun agent-shell-tramp-transcript-file-path ()
   "Return local transcript file path for current remote session, or nil."
-  (when-let ((dir (agent-shell-tramp--transcript-dir)))
-    (make-directory dir t)
-    (expand-file-name (format-time-string "%F-%H-%M-%S.md") dir)))
+  (if-let* ((dir (agent-shell-tramp--transcript-dir)))
+    (progn
+      (make-directory dir t)
+      (expand-file-name (format-time-string "%F-%H-%M-%S.md") dir))
+    (agent-shell--default-transcript-file-path)))
 
 (defun agent-shell-tramp--enable ()
   "Enable agent-shell TRAMP integration."
   (agent-shell-tramp--check-acp-support)
   (unless agent-shell-tramp--enabled
-    (setq agent-shell-tramp--orig-path-resolver-function
-          agent-shell-path-resolver-function
-          agent-shell-tramp--orig-transcript-file-path-function
-          agent-shell-transcript-file-path-function
-          agent-shell-path-resolver-function
-          #'agent-shell-tramp-resolve-path
-          agent-shell-transcript-file-path-function
-          #'agent-shell-tramp-transcript-file-path)
+    (setq
+     agent-shell-tramp--orig-path-resolver-function agent-shell-path-resolver-function
+     agent-shell-tramp--orig-transcript-file-path-function agent-shell-transcript-file-path-function
+     agent-shell-path-resolver-function #'agent-shell-tramp-resolve-path
+     agent-shell-transcript-file-path-function #'agent-shell-tramp-transcript-file-path)
     (setq agent-shell-tramp--enabled t)))
 
 (defun agent-shell-tramp--disable ()
   "Disable agent-shell TRAMP integration."
   (when agent-shell-tramp--enabled
-    (setq agent-shell-path-resolver-function
-          agent-shell-tramp--orig-path-resolver-function
-          agent-shell-transcript-file-path-function
-          agent-shell-tramp--orig-transcript-file-path-function
-          agent-shell-tramp--orig-path-resolver-function
-          nil
-          agent-shell-tramp--orig-transcript-file-path-function
-          nil)
+    (setq
+     agent-shell-path-resolver-function agent-shell-tramp--orig-path-resolver-function
+     agent-shell-transcript-file-path-function agent-shell-tramp--orig-transcript-file-path-function
+     agent-shell-tramp--orig-path-resolver-function nil
+     agent-shell-tramp--orig-transcript-file-path-function nil)
     (setq agent-shell-tramp--enabled nil)))
 
 ;;;###autoload
@@ -166,7 +170,8 @@ Use FALLBACK when STRING is nil or empty."
 When enabled, `agent-shell' resolves remote file paths through TRAMP and
 stores transcripts for remote sessions locally."
   :global t
-  :group 'agent-shell-tramp
+  :group
+  'agent-shell-tramp
   (if agent-shell-tramp-mode
       (agent-shell-tramp--enable)
     (agent-shell-tramp--disable)))
