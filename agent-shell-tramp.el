@@ -84,7 +84,9 @@ When `agent-shell-cwd' is remote:
 - TRAMP paths become remote-local paths for the agent.
 - Remote-local paths become TRAMP paths for Emacs file handlers.
 
-When `agent-shell-cwd' is local, return PATH unchanged."
+When `agent-shell-cwd' is local, pass PATH through the original
+`agent-shell-path-resolver-function' so symlink resolution and other
+custom resolvers are preserved."
   (if-let ((vec (agent-shell-tramp--current-vec)))
     (cond
      ((agent-shell-tramp--dissect path)
@@ -93,7 +95,9 @@ When `agent-shell-cwd' is local, return PATH unchanged."
       (tramp-make-tramp-file-name vec path))
      (t
       path))
-    path))
+    (if agent-shell-tramp--orig-path-resolver-function
+        (funcall agent-shell-tramp--orig-path-resolver-function path)
+      path)))
 
 (defun agent-shell-tramp--safe-component (string &optional fallback)
   "Return STRING sanitized for use as a single path component.

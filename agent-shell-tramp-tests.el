@@ -40,11 +40,25 @@
         "src/file.el")))))
 
 (ert-deftest agent-shell-tramp-resolve-local-context-is-identity ()
-  "Local sessions do not resolve paths."
+  "Local sessions do not resolve paths when no original resolver is set."
   (agent-shell-tramp-tests--with-cwd "/tmp/project/"
     (should
      (equal
       (agent-shell-tramp-resolve-path "/tmp/project/file.el") "/tmp/project/file.el"))))
+
+(ert-deftest agent-shell-tramp-resolve-local-context-chains-to-original ()
+  "Local sessions pass paths through the original resolver."
+  (let ((agent-shell-path-resolver-function agent-shell-path-resolver-function))
+    (unwind-protect
+        (progn
+          (setq agent-shell-path-resolver-function (lambda (path) (concat "resolved:" path)))
+          (agent-shell-tramp-mode 1)
+          (agent-shell-tramp-tests--with-cwd "/tmp/project/"
+            (should
+             (equal
+              (agent-shell-tramp-resolve-path "/tmp/project/file.el")
+              "resolved:/tmp/project/file.el"))))
+      (agent-shell-tramp-mode -1))))
 
 (ert-deftest agent-shell-tramp-check-acp-support-rejects-old-version ()
   "ACP support check rejects versions before file-handler support."
