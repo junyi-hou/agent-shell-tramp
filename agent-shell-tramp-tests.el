@@ -84,6 +84,62 @@
         (should
          (string-prefix-p "/home/user/project/.agent-shell/transcripts/" path))))))
 
+(ert-deftest agent-shell-tramp-shell-command-uses-remote-agent-directory ()
+  "Shell commands run in the remote agent directory and enter its prompt."
+  (let ((shell-buffer (generate-new-buffer " *agent-shell-tramp-command-test*"))
+        inserted-text
+        process-directory
+        process-program
+        process-args)
+    (unwind-protect
+        (progn
+          (with-current-buffer shell-buffer
+            (setq-local default-directory "/ssh:user@host:/project/"))
+          (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "pwd"))
+                    ((symbol-function 'agent-shell--current-shell)
+                     (lambda () shell-buffer))
+                    ((symbol-function 'agent-shell--build-command-for-execution)
+                     #'identity)
+                    ((symbol-function 'process-file)
+                     (lambda (program _infile _destination _display &rest args)
+                       (setq process-directory default-directory)
+                       (setq process-program program)
+                       (setq process-args args)
+                       (insert "/project\n")
+                       0))
+                    ((symbol-function 'shell-maker-busy) (lambda () nil))
+                    ((symbol-function 'agent-shell-insert)
+                     (lambda (&rest args)
+                       (setq inserted-text (plist-get args :text)))))
+            (agent-shell-tramp--insert-shell-command-output #'ignore))
+          (should (equal process-directory "/ssh:user@host:/project/"))
+          (should (equal process-program shell-file-name))
+          (should (equal process-args
+                         (list shell-command-switch "pwd 2>&1")))
+          (should (string-match-p "\\$ pwd\n\n/project" inserted-text)))
+      (kill-buffer shell-buffer))))
+
+(ert-deftest agent-shell-tramp-shell-command-leaves-local-process-unchanged ()
+  "Local shell commands retain the original process behavior."
+  (let ((shell-buffer (generate-new-buffer " *agent-shell-tramp-command-test*"))
+        (invoking-directory temporary-file-directory)
+        process-directory)
+    (unwind-protect
+        (progn
+          (with-current-buffer shell-buffer
+            (setq-local default-directory "/local/project/"))
+          (let ((original-called nil))
+            (cl-letf (((symbol-function 'agent-shell--current-shell)
+                       (lambda () shell-buffer)))
+              (let ((default-directory invoking-directory))
+                (agent-shell-tramp--insert-shell-command-output
+                 (lambda ()
+                   (setq original-called t)
+                   (setq process-directory default-directory)))))
+            (should original-called))
+          (should (equal process-directory invoking-directory)))
+      (kill-buffer shell-buffer))))
+
 (ert-deftest agent-shell-tramp-mode-installs-and-removes-wrappers ()
   "Global mode installs and removes path and transcript functions."
   (let ((agent-shell-path-resolver-function agent-shell-path-resolver-function)
@@ -101,9 +157,15 @@
            (eq
             agent-shell-transcript-file-path-function
             #'agent-shell-tramp-transcript-file-path))
+          (should
+           (advice-member-p #'agent-shell-tramp--insert-shell-command-output
+                            'agent-shell-insert-shell-command-output))
           (agent-shell-tramp-mode -1)
           (should-not agent-shell-tramp--enabled)
-          (should (eq agent-shell-path-resolver-function #'identity)))
+          (should (eq agent-shell-path-resolver-function #'identity))
+          (should-not
+           (advice-member-p #'agent-shell-tramp--insert-shell-command-output
+                            'agent-shell-insert-shell-command-output)))
       (setq agent-shell-path-resolver-function agent-shell-path-resolver-function)
       (setq agent-shell-transcript-file-path-function
             agent-shell-transcript-file-path-function)

@@ -47,6 +47,7 @@
   :group 'agent-shell-tramp)
 
 (declare-function agent-shell-cwd "agent-shell")
+(declare-function agent-shell--current-shell "agent-shell")
 (declare-function tramp-dissect-file-name "tramp")
 (declare-function tramp-file-name-host "tramp")
 (declare-function tramp-file-name-localname "tramp")
@@ -146,6 +147,38 @@ Use FALLBACK when STRING is nil or empty."
       (expand-file-name (format-time-string "%F-%H-%M-%S.md") dir))
     (agent-shell--default-transcript-file-path)))
 
+(defun agent-shell-tramp--insert-shell-command-output (command &rest args)
+  "Call COMMAND with ARGS, handling remote agent directories synchronously."
+  (if-let* ((shell-buffer (agent-shell--current-shell))
+            (directory (buffer-local-value 'default-directory shell-buffer))
+            ((file-remote-p directory)))
+      (let* ((shell-command (read-string "insert command output: "))
+             (process-command
+              (with-current-buffer shell-buffer
+                (agent-shell--build-command-for-execution
+                 (list shell-file-name
+                       shell-command-switch
+                       (format "%s 2>&1" shell-command)))))
+             (output
+              (let ((default-directory directory))
+                (with-temp-buffer
+                  (insert "$ " shell-command "\n\n")
+                  (apply #'process-file
+                         (car process-command) nil t nil (cdr process-command))
+                  (buffer-string))))
+             (code-block (format "```shell
+%s
+```" output)))
+        (if (with-current-buffer shell-buffer (shell-maker-busy))
+            (with-current-buffer shell-buffer
+              (agent-shell-prompt-queue
+               (agent-shell--prompt-queue-read
+                :initial (concat code-block "\n\n"))))
+          (agent-shell-insert :text (concat code-block "\n\n")
+                              :no-focus t
+                              :shell-buffer shell-buffer)))
+    (apply command args)))
+
 (defun agent-shell-tramp--enable ()
   "Enable agent-shell TRAMP integration."
   (agent-shell-tramp--check-acp-support)
@@ -155,6 +188,8 @@ Use FALLBACK when STRING is nil or empty."
      agent-shell-tramp--orig-transcript-file-path-function agent-shell-transcript-file-path-function
      agent-shell-path-resolver-function #'agent-shell-tramp-resolve-path
      agent-shell-transcript-file-path-function #'agent-shell-tramp-transcript-file-path)
+    (advice-add 'agent-shell-insert-shell-command-output
+                :around #'agent-shell-tramp--insert-shell-command-output)
     (setq agent-shell-tramp--enabled t)))
 
 (defun agent-shell-tramp--disable ()
@@ -165,6 +200,8 @@ Use FALLBACK when STRING is nil or empty."
      agent-shell-transcript-file-path-function agent-shell-tramp--orig-transcript-file-path-function
      agent-shell-tramp--orig-path-resolver-function nil
      agent-shell-tramp--orig-transcript-file-path-function nil)
+    (advice-remove 'agent-shell-insert-shell-command-output
+                   #'agent-shell-tramp--insert-shell-command-output)
     (setq agent-shell-tramp--enabled nil)))
 
 ;;;###autoload
