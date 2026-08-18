@@ -147,6 +147,15 @@ Use FALLBACK when STRING is nil or empty."
       (expand-file-name (format-time-string "%F-%H-%M-%S.md") dir))
     (agent-shell--default-transcript-file-path)))
 
+(defun agent-shell-tramp--markdown-fence (text)
+  "Return a Markdown fence longer than any backtick run in TEXT."
+  (let ((start 0)
+        (longest 0))
+    (while (string-match "`+" text start)
+      (setq longest (max longest (- (match-end 0) (match-beginning 0))))
+      (setq start (match-end 0)))
+    (make-string (max 3 (1+ longest)) ?`)))
+
 (defun agent-shell-tramp--insert-shell-command-output (command &rest args)
   "Call COMMAND with ARGS, handling remote agent directories synchronously."
   (if-let* ((shell-buffer (agent-shell--current-shell))
@@ -166,9 +175,10 @@ Use FALLBACK when STRING is nil or empty."
                   (apply #'process-file
                          (car process-command) nil t nil (cdr process-command))
                   (buffer-string))))
-             (code-block (format "```shell
+             (fence (agent-shell-tramp--markdown-fence output))
+             (code-block (format "%sshell
 %s
-```" output)))
+%s" fence output fence)))
         (if (with-current-buffer shell-buffer (shell-maker-busy))
             (with-current-buffer shell-buffer
               (agent-shell-prompt-queue

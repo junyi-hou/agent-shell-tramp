@@ -105,7 +105,7 @@
                        (setq process-directory default-directory)
                        (setq process-program program)
                        (setq process-args args)
-                       (insert "/project\n")
+                       (insert "/project\n```\n")
                        0))
                     ((symbol-function 'shell-maker-busy) (lambda () nil))
                     ((symbol-function 'agent-shell-insert)
@@ -116,7 +116,9 @@
           (should (equal process-program shell-file-name))
           (should (equal process-args
                          (list shell-command-switch "pwd 2>&1")))
-          (should (string-match-p "\\$ pwd\n\n/project" inserted-text)))
+          (should (string-prefix-p "````shell\n$ pwd\n\n/project\n```"
+                                   inserted-text))
+          (should (string-suffix-p "\n````\n\n" inserted-text)))
       (kill-buffer shell-buffer))))
 
 (ert-deftest agent-shell-tramp-shell-command-leaves-local-process-unchanged ()
@@ -166,6 +168,7 @@
           (should-not
            (advice-member-p #'agent-shell-tramp--insert-shell-command-output
                             'agent-shell-insert-shell-command-output)))
+      (agent-shell-tramp-mode -1)
       (setq agent-shell-path-resolver-function agent-shell-path-resolver-function)
       (setq agent-shell-transcript-file-path-function
             agent-shell-transcript-file-path-function)
