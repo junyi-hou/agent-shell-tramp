@@ -85,12 +85,12 @@
          (string-prefix-p "/home/user/project/.agent-shell/transcripts/" path))))))
 
 (ert-deftest agent-shell-tramp-shell-command-uses-remote-agent-directory ()
-  "Shell commands run in the remote agent directory and enter its prompt."
+  "make-process is called on the remote host with :file-handler t."
   (let ((shell-buffer (generate-new-buffer " *agent-shell-tramp-command-test*"))
-        inserted-text
         process-directory
-        process-program
-        process-args)
+        process-file-handler
+        process-command
+        captured-sentinel)
     (unwind-protect
         (progn
           (with-current-buffer shell-buffer
@@ -100,46 +100,43 @@
                      (lambda () shell-buffer))
                     ((symbol-function 'agent-shell--build-command-for-execution)
                      #'identity)
-                    ((symbol-function 'process-file)
-                     (lambda (program _infile _destination _display &rest args)
+                    ((symbol-function 'make-process)
+                     (lambda (&rest pargs)
                        (setq process-directory default-directory)
-                       (setq process-program program)
-                       (setq process-args args)
-                       (insert "/project\n```\n")
-                       0))
-                    ((symbol-function 'shell-maker-busy) (lambda () nil))
-                    ((symbol-function 'agent-shell-insert)
-                     (lambda (&rest args)
-                       (setq inserted-text (plist-get args :text)))))
-            (agent-shell-tramp--insert-shell-command-output #'ignore))
+                       (setq process-file-handler (plist-get pargs :file-handler))
+                       (setq process-command (plist-get pargs :command))
+                       (setq captured-sentinel (plist-get pargs :sentinel))
+                       (make-symbol "fake-proc")))
+                    ((symbol-function 'set-process-query-on-exit-flag) #'ignore)
+                    ((symbol-function 'run-at-time) #'ignore))
+            (agent-shell-tramp--insert-shell-command-output))
           (should (equal process-directory "/ssh:user@host:/project/"))
-          (should (equal process-program shell-file-name))
-          (should (equal process-args
-                         (list shell-command-switch "pwd 2>&1")))
-          (should (string-prefix-p "````shell\n$ pwd\n\n/project\n```"
-                                   inserted-text))
-          (should (string-suffix-p "\n````\n\n" inserted-text)))
+          (should process-file-handler)
+          (should (equal process-command
+                         (list shell-file-name shell-command-switch "pwd 2>&1")))
+          ;; Fire the sentinel to verify insertion via agent-shell-insert
+          (let (inserted-text)
+            (cl-letf (((symbol-function 'process-status) (lambda (_) 'exit))
+                      ((symbol-function 'shell-maker-busy) (lambda () nil))
+                      ((symbol-function 'set-window-configuration) #'ignore)
+                      ((symbol-function 'agent-shell-insert)
+                       (lambda (&rest pargs)
+                         (setq inserted-text (plist-get pargs :text)))))
+              (funcall captured-sentinel (make-symbol "fake-proc") 'finished))
+            (should (string-prefix-p "```shell\n$ pwd\n\n" inserted-text))
+            (should (string-suffix-p "\n```\n\n" inserted-text))))
       (kill-buffer shell-buffer))))
 
 (ert-deftest agent-shell-tramp-shell-command-leaves-local-process-unchanged ()
-  "Local shell commands retain the original process behavior."
-  (let ((shell-buffer (generate-new-buffer " *agent-shell-tramp-command-test*"))
-        (invoking-directory temporary-file-directory)
-        process-directory)
+  "Local shell commands return nil so the upstream function runs normally."
+  (let ((shell-buffer (generate-new-buffer " *agent-shell-tramp-command-test*")))
     (unwind-protect
         (progn
           (with-current-buffer shell-buffer
             (setq-local default-directory "/local/project/"))
-          (let ((original-called nil))
-            (cl-letf (((symbol-function 'agent-shell--current-shell)
-                       (lambda () shell-buffer)))
-              (let ((default-directory invoking-directory))
-                (agent-shell-tramp--insert-shell-command-output
-                 (lambda ()
-                   (setq original-called t)
-                   (setq process-directory default-directory)))))
-            (should original-called))
-          (should (equal process-directory invoking-directory)))
+          (cl-letf (((symbol-function 'agent-shell--current-shell)
+                     (lambda () shell-buffer)))
+            (should-not (agent-shell-tramp--insert-shell-command-output))))
       (kill-buffer shell-buffer))))
 
 (ert-deftest agent-shell-tramp-mode-installs-and-removes-wrappers ()
