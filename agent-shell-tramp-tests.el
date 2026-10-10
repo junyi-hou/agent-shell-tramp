@@ -84,6 +84,61 @@
         (should
          (string-prefix-p "/home/user/project/.agent-shell/transcripts/" path))))))
 
+(ert-deftest agent-shell-tramp-shell-command-uses-remote-agent-directory ()
+  "make-process is called on the remote host with :file-handler t."
+  (let ((shell-buffer (generate-new-buffer " *agent-shell-tramp-command-test*"))
+        process-directory
+        process-file-handler
+        process-command
+        captured-sentinel)
+    (unwind-protect
+        (progn
+          (with-current-buffer shell-buffer
+            (setq-local default-directory "/ssh:user@host:/project/"))
+          (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "pwd"))
+                    ((symbol-function 'agent-shell--current-shell)
+                     (lambda () shell-buffer))
+                    ((symbol-function 'agent-shell--build-command-for-execution)
+                     #'identity)
+                    ((symbol-function 'make-process)
+                     (lambda (&rest pargs)
+                       (setq process-directory default-directory)
+                       (setq process-file-handler (plist-get pargs :file-handler))
+                       (setq process-command (plist-get pargs :command))
+                       (setq captured-sentinel (plist-get pargs :sentinel))
+                       (make-symbol "fake-proc")))
+                    ((symbol-function 'set-process-query-on-exit-flag) #'ignore)
+                    ((symbol-function 'run-at-time) #'ignore))
+            (agent-shell-tramp--insert-shell-command-output))
+          (should (equal process-directory "/ssh:user@host:/project/"))
+          (should process-file-handler)
+          (should (equal process-command
+                         (list shell-file-name shell-command-switch "pwd 2>&1")))
+          ;; Fire the sentinel to verify insertion via agent-shell-insert
+          (let (inserted-text)
+            (cl-letf (((symbol-function 'process-status) (lambda (_) 'exit))
+                      ((symbol-function 'shell-maker-busy) (lambda () nil))
+                      ((symbol-function 'set-window-configuration) #'ignore)
+                      ((symbol-function 'agent-shell-insert)
+                       (lambda (&rest pargs)
+                         (setq inserted-text (plist-get pargs :text)))))
+              (funcall captured-sentinel (make-symbol "fake-proc") 'finished))
+            (should (string-prefix-p "```shell\n$ pwd\n\n" inserted-text))
+            (should (string-suffix-p "\n```\n\n" inserted-text))))
+      (kill-buffer shell-buffer))))
+
+(ert-deftest agent-shell-tramp-shell-command-leaves-local-process-unchanged ()
+  "Local shell commands return nil so the upstream function runs normally."
+  (let ((shell-buffer (generate-new-buffer " *agent-shell-tramp-command-test*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer shell-buffer
+            (setq-local default-directory "/local/project/"))
+          (cl-letf (((symbol-function 'agent-shell--current-shell)
+                     (lambda () shell-buffer)))
+            (should-not (agent-shell-tramp--insert-shell-command-output))))
+      (kill-buffer shell-buffer))))
+
 (ert-deftest agent-shell-tramp-mode-installs-and-removes-wrappers ()
   "Global mode installs and removes path and transcript functions."
   (let ((agent-shell-path-resolver-function agent-shell-path-resolver-function)
@@ -101,9 +156,16 @@
            (eq
             agent-shell-transcript-file-path-function
             #'agent-shell-tramp-transcript-file-path))
+          (should
+           (advice-member-p #'agent-shell-tramp--insert-shell-command-output
+                            'agent-shell-insert-shell-command-output))
           (agent-shell-tramp-mode -1)
           (should-not agent-shell-tramp--enabled)
-          (should (eq agent-shell-path-resolver-function #'identity)))
+          (should (eq agent-shell-path-resolver-function #'identity))
+          (should-not
+           (advice-member-p #'agent-shell-tramp--insert-shell-command-output
+                            'agent-shell-insert-shell-command-output)))
+      (agent-shell-tramp-mode -1)
       (setq agent-shell-path-resolver-function agent-shell-path-resolver-function)
       (setq agent-shell-transcript-file-path-function
             agent-shell-transcript-file-path-function)
