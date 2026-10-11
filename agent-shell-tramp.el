@@ -47,13 +47,6 @@
   :group 'agent-shell-tramp)
 
 (declare-function agent-shell-cwd "agent-shell")
-(declare-function agent-shell--current-shell "agent-shell")
-(declare-function agent-shell--build-command-for-execution "agent-shell")
-(declare-function agent-shell--display-buffer "agent-shell")
-(declare-function agent-shell-insert "agent-shell")
-(declare-function agent-shell-prompt-queue "agent-shell-prompt-queue")
-(declare-function agent-shell--prompt-queue-read "agent-shell-prompt-queue")
-(declare-function shell-maker-busy "shell-maker")
 (declare-function tramp-dissect-file-name "tramp")
 (declare-function tramp-file-name-host "tramp")
 (declare-function tramp-file-name-localname "tramp")
@@ -153,83 +146,6 @@ Use FALLBACK when STRING is nil or empty."
       (expand-file-name (format-time-string "%F-%H-%M-%S.md") dir))
     (agent-shell--default-transcript-file-path)))
 
-(defun agent-shell-tramp--markdown-fence (text)
-  "Return a Markdown fence longer than any backtick run in TEXT."
-  (let ((start 0)
-        (longest 0))
-    (while (string-match "`+" text start)
-      (setq longest (max longest (- (match-end 0) (match-beginning 0))))
-      (setq start (match-end 0)))
-    (make-string (max 3 (1+ longest)) ?`)))
-
-(defun agent-shell-tramp--insert-shell-command-output ()
-  "Run the insert-shell-command-output flow on the remote host.
-
-When the current agent-shell's working directory is remote, handles the
-entire flow: prompts for a command, runs it asynchronously on the remote
-host via `make-process' with `:file-handler t', and inserts the formatted
-output.  Returns non-nil to prevent the upstream function from running.
-Returns nil when the directory is local so the upstream function runs normally."
-  (when-let* ((shell-buffer (agent-shell--current-shell))
-              (directory (buffer-local-value 'default-directory shell-buffer))
-              ((file-remote-p directory)))
-      (let* ((shell-command (read-string "insert command output: "))
-             (process-command
-              (with-current-buffer shell-buffer
-                (agent-shell--build-command-for-execution
-                 (list shell-file-name
-                       shell-command-switch
-                       (format "%s 2>&1" shell-command)))))
-             (output-buffer
-              (with-current-buffer (generate-new-buffer (format "*%s*" shell-command))
-                (insert "$ " shell-command "\n\n")
-                (setq-local buffer-read-only t)
-                (let ((map (make-sparse-keymap)))
-                  (define-key map (kbd "q") #'quit-window)
-                  (use-local-map map))
-                (current-buffer)))
-             (window-config (current-window-configuration))
-             (proc
-              (let ((default-directory directory))
-                (make-process
-                 :name shell-command
-                 :buffer output-buffer
-                 :command process-command
-                 :connection-type 'pipe
-                 :file-handler t
-                 :filter
-                 (lambda (proc output)
-                   (when (buffer-live-p (process-buffer proc))
-                     (with-current-buffer (process-buffer proc)
-                       (let ((inhibit-read-only t))
-                         (goto-char (point-max))
-                         (insert output)))))
-                 :sentinel
-                 (lambda (process _event)
-                   (when (memq (process-status process) '(exit signal))
-                     (message "Done")
-                     (set-window-configuration window-config)
-                     (let* ((output-text (with-current-buffer output-buffer
-                                           (buffer-string)))
-                            (fence (agent-shell-tramp--markdown-fence output-text))
-                            (code-block (format "%sshell\n%s\n%s"
-                                                fence output-text fence)))
-                       (if (with-current-buffer shell-buffer (shell-maker-busy))
-                           (with-current-buffer shell-buffer
-                             (agent-shell-prompt-queue
-                              (agent-shell--prompt-queue-read
-                               :initial (concat code-block "\n\n"))))
-                         (agent-shell-insert :text (concat code-block "\n\n")
-                                            :no-focus t
-                                            :shell-buffer shell-buffer)))
-                     (when (buffer-live-p output-buffer)
-                       (kill-buffer output-buffer))))))))
-        (set-process-query-on-exit-flag proc nil)
-        (run-at-time "0.2 sec" nil
-                     (lambda ()
-                       (unless (equal (process-status proc) 'exit)
-                         (agent-shell--display-buffer output-buffer)))))))
-
 (defun agent-shell-tramp--enable ()
   "Enable agent-shell TRAMP integration."
   (agent-shell-tramp--check-acp-support)
@@ -239,8 +155,6 @@ Returns nil when the directory is local so the upstream function runs normally."
      agent-shell-tramp--orig-transcript-file-path-function agent-shell-transcript-file-path-function
      agent-shell-path-resolver-function #'agent-shell-tramp-resolve-path
      agent-shell-transcript-file-path-function #'agent-shell-tramp-transcript-file-path)
-    (advice-add 'agent-shell-insert-shell-command-output
-                :before-until #'agent-shell-tramp--insert-shell-command-output)
     (setq agent-shell-tramp--enabled t)))
 
 (defun agent-shell-tramp--disable ()
@@ -251,8 +165,6 @@ Returns nil when the directory is local so the upstream function runs normally."
      agent-shell-transcript-file-path-function agent-shell-tramp--orig-transcript-file-path-function
      agent-shell-tramp--orig-path-resolver-function nil
      agent-shell-tramp--orig-transcript-file-path-function nil)
-    (advice-remove 'agent-shell-insert-shell-command-output
-                   #'agent-shell-tramp--insert-shell-command-output)
     (setq agent-shell-tramp--enabled nil)))
 
 ;;;###autoload
